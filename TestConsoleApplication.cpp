@@ -1,4 +1,4 @@
-﻿#include <iostream>
+#include <iostream>
 #include <string>
 
 // 定义部分常量
@@ -17,6 +17,8 @@ extern uint8_t right_move_count;
 extern int i;
 extern bool success_signal;
 extern bool post_signal;
+extern bool bracket_signal;
+extern unsigned int bracket_mass_counter;
 extern unsigned int total_mass;
 
 // 定义化学元素符号和对应的原子量数组，以及加上一大堆的额外空间用于缓冲，避免在循环中访问越界。数组中的元素符号和原子量按照元素周期表的顺序排列，直到第118个元素（Og）。数组末尾使用特殊字符 "*" 和0来标记结束，以便在循环中进行验证时能够正确识别化学式的结束。
@@ -173,6 +175,7 @@ int main() {
 	cout << "\033[34m[*]\033[0m Also, you can enter 'exit', 'quit', or 'end' to exit the program." << endl;
 	cout << "\033[34m[*]\033[0m The chemical formula should only contain valid element symbols (e.g., H, He, Li) followed by optional numbers (e.g., H2, O2)." << endl;
 	cout << "\033[34m[*]\033[0m For example, you can enter 'H2O' to calculate the molecular mass of water." << endl;
+	cout << "\033[34m[*]\033[0m If you need to type a repeating part, you can use bracket to do it. Like: Cu(OH)2." << endl;
 	cout << "\033[34m[*]\033[0m Because approximate values were used instead of accurate ones, it is inevitable that there will be minor errors." << endl;
 	cout << "\033[34m[*]\033[0m Let's get started!" << endl << endl;
 
@@ -185,6 +188,16 @@ int main() {
 		// 使用 erase 删除多余的空格和各种乱七八糟的不可见字符，确保输入的化学式是干净的，避免在后续的验证和计算过程中出现问题。这里使用了 remove-erase惯用法来删除字符串中的空格字符。
         chemicals.erase(remove(chemicals.begin(), chemicals.end(), ' '), chemicals.end());
 		chemicals.erase(remove(chemicals.begin(), chemicals.end(), '\x00'), chemicals.end());
+
+		// 进行一个简单检测，确保所有字符都是ASCII字符，避免用户输入了非ASCII字符导致程序无法正确处理。这里使用了一个循环来检查字符串中的每个字符是否都是ASCII字符，如果发现非ASCII字符，则输出错误信息并跳出循环。
+        bool success_signal = true;
+        for (char c : chemicals) {
+            if (static_cast<unsigned char>(c) > 127) {
+                cout << "\033[31m[-]\033[0m Invalid chemical formula: non-ASCII character '" << c << "' detected." << endl;
+                success_signal = false;
+            }
+		}
+		if (!success_signal) continue;  // 如果检测到非ASCII字符，则跳出循环，等待用户重新输入化学式。
 
         // 初步判断用户输入的化学式是否为退出命令或者空输入，亦或者存在手动输入的终止符，如果是则退出程序或者提示用户输入有效的化学式
         if (chemicals == "exit" || chemicals == "quit" || chemicals == "end") {
@@ -202,9 +215,13 @@ int main() {
 
         // 如果输入的化学式不为空且不是退出命令，则进行进一步的验证并尝试计算分子量
         else {
-            bool success_signal = false;  // 定义一个布尔变量 success_signal，用于指示化学式验证和分子量计算是否成功。初始值为 false，表示尚未成功。
+			bool success_signal = false;  // 定义一个布尔变量 success_signal，用于指示化学式验证和分子量计算是否成功。初始值为 false，表示尚未成功。
+			bool bracket_signal = false;  // 定义一个布尔变量 bracket_signal，用于指示化学式中是否存在括号。初始值为 false，表示尚未检测到括号。
             unsigned int total_mass = 0;  // 初始化总分子量为0
-            chemicals += "******";  // 在化学式的末尾添加数个特殊字符 "*"，作为循环验证的结束标志，这样在循环中就不需要额外的条件来判断是否已经到达化学式的末尾。
+			unsigned int bracket_mass_counter = 0;  // 定义一个变量 bracket_mass_counter，用于在处理括号内的部分时临时存储该部分的分子量。初始值为0，表示尚未计算任何分子量。
+
+            // 在化学式的末尾添加数个特殊字符 "*"，作为循环验证的结束标志，这样在循环中就不需要额外的条件来判断是否已经到达化学式的末尾。
+            chemicals += "******";
 
             // 开始循环并进行化学式的验证，确保输入的化学式符合化学式的基本规则，例如元素符号必须由一个大写字母开头，后面可能跟一个小写字母（如果元素符号是两字母的），以及可能跟一个数字（表示该元素的数量）。同时还需要检查化学式中是否包含无效字符。
             for (int i = 0; i < chemicals.length(); i++) {
@@ -247,13 +264,23 @@ int main() {
 									pointer_count++;  // 向右移动一个字符，继续检查下一个字符是否也是数字。
                                 }
 
-                                // 将元素的原子量乘以数量（将 count_string 转换为整数），添加到总分子量中。
-								total_mass += union_chemicals_mass[j] * stoi(count_string);
+								// 将 right_move_count 更新为 pointer_count 与当前元素符号末尾位置的差值，以便在下一次循环中正确解析下一个元素符号。
+                                if (bracket_signal) {
+									bracket_mass_counter += union_chemicals_mass[j] * stoi(count_string);  // 如果当前在括号内，则将元素的原子量乘以数量（将 count_string 转换为整数），添加到括号内的分子量计数器中，以便在遇到右括号时正确计算括号内部分的分子量。    
+                                }
+                                else {  // 否则，将元素的原子量乘以数量（将 count_string 转换为整数），添加到总分子量中。
+                                    total_mass += union_chemicals_mass[j] * stoi(count_string);
+                                }
                             }
 
                             // 如果下一个字符不是数字，表示该元素的数量默认为1
                             else {
-                                total_mass += union_chemicals_mass[j];  // 将元素的原子量添加到总分子量中
+                                if (bracket_signal) {
+									bracket_mass_counter += union_chemicals_mass[j];  // 将元素的原子量添加到括号内的分子量计数器中，以便在遇到右括号时正确计算括号内部分的分子量。
+                                }
+                                else {
+                                    total_mass += union_chemicals_mass[j];  // 否则，则直接将元素的原子量添加到总分子量中。
+                                }
                             }
 
                             // 成功解析了一个元素符号，设置 post_signal 为 true
@@ -286,6 +313,27 @@ int main() {
                     }
                     continue;
                 }
+
+				// 如果这是一个左括号，那么设置 bracket_signal 为 true，表示进入了一个括号内的部分。括号内的内容需要单独处理，以便正确计算分子量。
+                else if (chemicals[i] == '(') {
+                    bracket_signal = true;  // 如果遇到左括号，设置 bracket_signal 为 true，表示进入了一个括号内的部分。
+                    continue;
+                }
+
+				// 如果这是一个右括号，那么之前必须已经遇到过一个左括号，表示这是一个合法的括号对。如果遇到右括号但之前没有遇到过左括号，那么这就是一个无效的化学式。
+                else if (chemicals[i] == ')') {
+                    if (!bracket_signal) {  // 如果遇到右括号，但之前没有遇到过左括号，那么这就是一个无效的化学式
+                        cout << "\033[31m[-]\033[0m Invalid chemical formula: unmatched closing parenthesis." << endl;
+                        break;
+                    }
+
+                    bracket_signal = false;  // 如果遇到右括号，设置 bracket_signal 为 false，表示离开了括号内的部分。
+                    if (isdigit(chemicals[i + 1])) {  // 如果右括号后面跟着一个数字，表示括号内的部分需要乘以这个数量。
+						total_mass += bracket_mass_counter * (chemicals[i + 1] - '0');  // 将括号内的分子量乘以数量（将字符数字转换为整数），并添加到总分子量中。
+						bracket_mass_counter = 0;  // 重置 bracket_mass_counter，为下一个括号内的部分做准备。
+                    }
+                    continue;
+				}
 
                 // 如果字符既不是大写字母、小写字母，也不是数字，那么这就是一个无效的化学式，因为化学式只能包含这些类型的字符。
                 else {
